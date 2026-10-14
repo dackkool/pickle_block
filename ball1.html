@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>寶石方塊 - 掉球互動版</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #0f172a;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        #game-container {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+            background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
+        }
+        header {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            width: 150px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.5);
+            color: #fff;
+            gap: 15px;
+            border-right: 2px solid rgba(255, 255, 255, 0.1);
+            z-index: 10;
+            flex-shrink: 0;
+        }
+        .stat-box {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 8px;
+            border-radius: 10px;
+            text-align: center;
+            width: 100%;
+            font-size: 0.95rem;
+            font-weight: bold;
+        }
+        .stat-box span {
+            display: block;
+            font-size: 1.2rem;
+            color: #ffd700;
+            margin-top: 4px;
+        }
+        #board-wrapper {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            touch-action: none;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            border-radius: 8px;
+            background: #111;
+        }
+        /* 左下角攝影機畫面（除錯與對準用） */
+        #webcam-preview {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            width: 140px;
+            height: 105px;
+            border-radius: 8px;
+            border: 2px solid rgba(255,255,255,0.4);
+            transform: scaleX(-1); /* 鏡像 */
+            z-index: 50;
+            background: #000;
+        }
+        /* 開始與結算覆蓋層 */
+        #overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(10, 10, 20, 0.92);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 99999;
+            text-align: center;
+            padding: 20px;
+        }
+        #overlay h1 {
+            font-size: 2.2rem;
+            margin-bottom: 10px;
+            color: #ffd700;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.6);
+        }
+        #overlay p {
+            font-size: 1.1rem;
+            margin-bottom: 25px;
+            color: #cbd5e1;
+            max-width: 500px;
+            line-height: 1.5;
+        }
+        .btn {
+            background: linear-gradient(135deg, #ff416c, #ff4b2b);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            font-size: 1.3rem;
+            font-weight: bold;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 5px 20px rgba(255, 65, 108, 0.5);
+            -webkit-tap-highlight-color: transparent;
+        }
+        .btn:active {
+            transform: scale(0.95);
+        }
+    </style>
+</head>
+<body>
+
+<!-- 隱藏的視頻來源 -->
+<video id="webcam" autoplay playsinline muted style="display:none;"></video>
+
+<div id="game-container">
+    <header>
+        <div class="stat-box">分數<span id="score">0</span></div>
+        <div class="stat-box">時間<span id="timer">02:00</span></div>
+    </header>
+    <div id="board-wrapper">
+        <canvas id="gameCanvas"></canvas>
+        <!-- 鏡頭預覽畫布 -->
+        <canvas id="webcam-preview"></canvas>
+    </div>
+</div>
+
+<div id="overlay">
+    <h1 id="overlay-title">寶石方塊 - 投球互動版</h1>
+    <p id="overlay-desc">請將手機前置鏡頭對著自己或投擲區。拿起你的 Pickleball（建議亮黃色/亮綠色）向鏡頭或指定區域移動，系統將自動追蹤球體位置來消除寶石！</p>
+    <button class="btn" onclick="startGame()">允許相機並開始遊戲</button>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const video = document.getElementById('webcam');
+    const previewCanvas = document.getElementById('webcam-preview');
+    const previewCtx = previewCanvas.getContext('2d');
+    
+    const COLS = 10;
+    const ROWS = 7;
+    let tileSize = 40;
+
+    const GEM_COLORS = [
+        { main: '#ff3366', light: '#ff8099', dark: '#cc0033', shape: 'diamond' }, // 紅
+        { main: '#33ccff', light: '#80e5ff', dark: '#0099cc', shape: 'circle' },  // 藍
+        { main: '#33ff66', light: '#80ff99', dark: '#00cc33', shape: 'square' },  // 綠
+        { main: '#ffcc00', light: '#ffe680', dark: '#cc9900', shape: 'star' },    // 黃
+        { main: '#cc33ff', light: '#e680ff', dark: '#9900cc', shape: 'triangle' }// 紫
+    ];
+
+    let board = [];
+    let score = 0;
+    let timeLeft = 120;
+    let gameInterval = null;
+    let isPlaying = false;
+    let particles = [];
+    let audioCtx = null;
+
+    // 球體追蹤座標
+    let ballX = -100;
+    let ballY = -100;
+    let lastHitTime = 0;
+
+    function initAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } else if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+    }
+
+    function playSound(type) {
+        if (!audioCtx) return;
+        try {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            const now = audioCtx.currentTime;
+            if (type === 'pop') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(400, now);
+                osc.frequency.exponentialRampToValueAtTime(800, now + 0.15);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.15);
+                osc.start(now);
+                osc.stop(now + 0.15);
+            } else if (type === 'match') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(300, now);
+                osc.frequency.setValueAtTime(600, now + 0.1);
+                osc.frequency.setValueAtTime(900, now + 0.2);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            } else if (type === 'gameover') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(300, now);
+                osc.frequency.linearRampToValueAtTime(100, now + 0.5);
+                gain.gain.setValueAtTime(0.4, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.5);
+                osc.start(now);
+                osc.stop(now + 0.5);
+            }
+        } catch(e) {}
+    }
+
+    function resizeCanvas() {
+        const wrapper = document.getElementById('board-wrapper');
+        const maxWidth = wrapper.clientWidth - 20;
+        const maxHeight = wrapper.clientHeight - 20;
+        
+        tileSize = Math.floor(Math.min(maxWidth / COLS, maxHeight / ROWS));
+        canvas.width = COLS * tileSize;
+        canvas.height = ROWS * tileSize;
+        
+        previewCanvas.width = 140;
+        previewCanvas.height = 105;
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    // 啟動前置相機
+    async function setupCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user', width: 320, height: 240 }
+            });
+            video.srcObject = stream;
+            await new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    resolve();
+                };
+            });
+            video.play();
+            requestAnimationFrame(trackBallLoop);
+        } catch (err) {
+            alert('無法存取相機，請檢查瀏覽器權限！');
+        }
+    }
+
+    // 簡易即時色塊/球體追蹤 (尋找畫面中最亮的黃/綠色球體像素中心)
+    const procCanvas = document.createElement('canvas');
+    const procCtx = procCanvas.getContext('2d', { willReadFrequently: true });
+    procCanvas.width = 160;
+    procCanvas.height = 120;
+
+    function trackBallLoop() {
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            procCtx.drawImage(video, 0, 0, procCanvas.width, procCanvas.height);
+            previewCtx.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
+
+            const frameData = procCtx.getImageData(0, 0, procCanvas.width, procCanvas.height);
+            const data = frameData.data;
+
+            let totalX = 0;
+            let totalY = 0;
+            let count = 0;
+
+            // 簡易閾值篩選：尋找類似 Pickleball 的高亮度黃綠色 (R高, G高, B低)
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+
+                // 判斷是否為亮黃/綠色球體特徵
+                if (g > 100 && r > 90 && b < 100 && (g - b) > 40) {
+                    const pixelIndex = i / 4;
+                    const x = pixelIndex % procCanvas.width;
+                    const y = Math.floor(pixelIndex / procCanvas.width);
+
+                    totalX += x;
+                    totalY += y;
+                    count++;
+                }
+            }
+
+            if (count > 15) { // 確保有足夠大小的球體像素面積
+                const avgX = totalX / count;
+                const avgY = totalY / count;
+
+                // 映射到主畫布 (注意鏡像反轉 x 軸)
+                const rect = canvas.getBoundingClientRect();
+                ballX = (1 - (avgX / procCanvas.width)) * rect.width;
+                ballY = (avgY / procCanvas.height) * rect.height;
+
+                // 繪製預覽追蹤點
+                previewCtx.fillStyle = '#00ff00';
+                previewCtx.beginPath();
+                previewCtx.arc(avgX * (previewCanvas.width / procCanvas.width), avgY * (previewCanvas.height / procCanvas.height), 6, 0, Math.PI * 2);
+                previewCtx.fill();
+
+                // 觸發遊戲判定
+                if (isPlaying) {
+                    const now = Date.now();
+                    if (now - lastHitTime > 300) {
+                        checkBallHit(ballX, ballY);
+                        lastHitTime = now;
+                    }
+                }
+            } else {
+                ballX = -100;
+                ballY = -100;
+            }
+        }
+        requestAnimationFrame(trackBallLoop);
+    }
+
+    function checkBallHit(x, y) {
+        const rect = canvas.getBoundingClientRect();
+        if (x >= 0 && x <= rect.width && y >= 0 && y <= rect.height) {
+            const c = Math.floor(x / tileSize);
+            const r = Math.floor(y / tileSize);
+            
+            if (r >= 0 && r < ROWS && c >= 0 && c < COLS && board[r] && board[r][c] !== null) {
+                let color = board[r][c];
+                let visited = Array(ROWS).fill(0).map(() => Array(COLS).fill(false));
+                let group = getConnectedGroup(r, c, color, visited);
+                
+                if (group.length > 1) {
+                    destroyGroup(group);
+                }
+            }
+        }
+    }
+
+    function startGame() {
+        initAudio();
+        setupCamera();
+        
+        const overlay = document.getElementById('overlay');
+        overlay.style.display = 'none';
+        
+        score = 0;
+        timeLeft = 120;
+        document.getElementById('score').innerText = score;
+        document.getElementById('timer').innerText = '02:00';
+        
+        initBoard();
+        isPlaying = true;
+        
+        if (gameInterval) clearInterval(gameInterval);
+        gameInterval = setInterval(() => {
+            timeLeft--;
+            let mins = Math.floor(timeLeft / 60);
+            let secs = timeLeft % 60;
+            document.getElementById('timer').innerText = 
+                `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            
+            if (timeLeft <= 0) {
+                endGame();
+            }
+        }, 1000);
+    }
+
+    function endGame() {
+        isPlaying = false;
+        clearInterval(gameInterval);
+        playSound('gameover');
+        
+        const overlay = document.getElementById('overlay');
+        document.getElementById('overlay-title').innerText = '時間到！遊戲結束';
+        document.getElementById('overlay-desc').innerText = `最終得分：${score} 分`;
+        document.querySelector('#overlay .btn').innerText = '重新開始';
+        overlay.style.display = 'flex';
+    }
+
+    function initBoard() {
+        resizeCanvas();
+        board = [];
+        for (let r = 0; r < ROWS; r++) {
+            board[r] = [];
+            for (let c = 0; c < COLS; c++) {
+                board[r][c] = Math.floor(Math.random() * GEM_COLORS.length);
+            }
+        }
+        resolveMatchesInstant();
+    }
+
+    function resolveMatchesInstant() {
+        let matched;
+        do {
+            matched = findMatches();
+            if (matched.length > 0) {
+                matched.forEach(pos => {
+                    board[pos.r][pos.c] = Math.floor(Math.random() * GEM_COLORS.length);
+                });
+            }
+        } while (matched.length > 0);
+    }
+
+    function findMatches() {
+        let visited = Array(ROWS).fill(0).map(() => Array(COLS).fill(false));
+        let allMatches = [];
+
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                if (board[r][c] !== null && !visited[r][c]) {
+                    let group = getConnectedGroup(r, c, board[r][c], visited);
+                    if (group.length >= 4) {
+                        allMatches.push(...group);
+                    }
+                }
+            }
+        }
+        return allMatches;
+    }
+
+    function getConnectedGroup(r, c, color, visited) {
+        let group = [];
+        let stack = [{r, c}];
+        while (stack.length > 0) {
+            let curr = stack.pop();
+            let cr = curr.r;
+            let cc = curr.c;
+            
+            if (cr < 0 || cr >= ROWS || cc < 0 || cc >= COLS) continue;
+            if (visited[cr][cc]) continue;
+            if (board[cr][cc] !== color) continue;
+            
+            visited[cr][cc] = true;
+            group.push({r: cr, c: cc});
+            
+            stack.push({r: cr + 1, c: cc});
+            stack.push({r: cr - 1, c: cc});
+            stack.push({r: cr, c: cc + 1});
+            stack.push({r: cr, c: cc - 1});
+        }
+        return group;
+    }
+
+    // 保留滑鼠點擊以供測試
+    canvas.addEventListener('click', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        checkBallHit(e.clientX - rect.left, e.clientY - rect.top);
+    });
+
+    function destroyGroup(group) {
+        score += group.length * 10;
+        document.getElementById('score').innerText = score;
+        playSound('pop');
+
+        group.forEach(pos => {
+            createParticles(pos.c * tileSize + tileSize / 2, pos.r * tileSize + tileSize / 2, GEM_COLORS[board[pos.r][pos.c]].main);
+            board[pos.r][pos.c] = null;
+        });
+
+        applyGravityAndRefill();
+    }
+
+    function checkAndProcessAutomaticMatches() {
+        let matches = findMatches();
+        if (matches.length > 0) {
+            score += matches.length * 15;
+            document.getElementById('score').innerText = score;
+            playSound('match');
+
+            matches.forEach(pos => {
+                if (board[pos.r][pos.c] !== null) {
+                    createParticles(pos.c * tileSize + tileSize / 2, pos.r * tileSize + tileSize / 2, GEM_COLORS[board[pos.r][pos.c]].main);
+                    board[pos.r][pos.c] = null;
+                }
+            });
+
+            applyGravityAndRefill();
+        }
+    }
+
+    function applyGravityAndRefill() {
+        for (let c = 0; c < COLS; c++) {
+            let writeRow = ROWS - 1;
+            for (let r = ROWS - 1; r >= 0; r--) {
+                if (board[r][c] !== null) {
+                    let temp = board[r][c];
+                    board[r][c] = null;
+                    board[writeRow][c] = temp;
+                    writeRow--;
+                }
+            }
+            for (let r = writeRow; r >= 0; r--) {
+                board[r][c] = Math.floor(Math.random() * GEM_COLORS.length);
+            }
+        }
+
+        setTimeout(() => {
+            if (isPlaying) {
+                checkAndProcessAutomaticMatches();
+            }
+        }, 200);
+    }
+
+    function createParticles(x, y, color) {
+        for (let i = 0; i < 12; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 4 + 2;
+            particles.push({
+                x: x,
+                y: y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                color: color,
+                alpha: 1,
+                decay: Math.random() * 0.03 + 0.02
+            });
+        }
+    }
+
+    function drawGem(x, y, size, colorObj) {
+        ctx.save();
+        ctx.translate(x, y);
+        
+        const s = size * 0.82;
+        const half = s / 2;
+
+        ctx.shadowColor = 'rgba(0,0,0,0.4)';
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 3;
+
+        const grad = ctx.createRadialGradient(-s*0.2, -s*0.2, s*0.1, 0, 0, s);
+        grad.addColorStop(0, colorObj.light);
+        grad.addColorStop(1, colorObj.dark);
+        ctx.fillStyle = grad;
+
+        if (colorObj.shape === 'diamond') {
+            ctx.beginPath();
+            ctx.moveTo(0, -half);
+            ctx.lineTo(half, 0);
+            ctx.lineTo(0, half);
+            ctx.lineTo(-half, 0);
+            ctx.closePath();
+            ctx.fill();
+        } else if (colorObj.shape === 'circle') {
+            ctx.beginPath();
+            ctx.arc(0, 0, half * 0.85, 0, Math.PI * 2);
+            ctx.fill();
+        } else if (colorObj.shape === 'square') {
+            ctx.beginPath();
+            ctx.roundRect(-half * 0.8, -half * 0.8, s * 0.8, s * 0.8, 6);
+            ctx.fill();
+        } else if (colorObj.shape === 'star') {
+            ctx.beginPath();
+            ctx.arc(0, 0, half * 0.8, 0, Math.PI * 2);
+            ctx.fill();
+        } else {
+            ctx.beginPath();
+            ctx.moveTo(0, -half);
+            ctx.lineTo(half, half * 0.8);
+            ctx.lineTo(-half, half * 0.8);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.beginPath();
+        ctx.arc(-half * 0.3, -half * 0.3, half * 0.25, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+    }
+
+    function update() {
+        for (let i = particles.length - 1; i >= 0; i--) {
+            let p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.alpha -= p.decay;
+            if (p.alpha <= 0) {
+                particles.splice(i, 1);
+            }
+        }
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                ctx.fillStyle = (r + c) % 2 === 0 ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.1)';
+                ctx.fillRect(c * tileSize, r * tileSize, tileSize, tileSize);
+                
+                if (board[r] && board[r][c] !== null) {
+                    let colorIdx = board[r][c];
+                    drawGem(
+                        c * tileSize + tileSize / 2,
+                        r * tileSize + tileSize / 2,
+    
