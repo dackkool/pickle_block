@@ -45,10 +45,10 @@ canvas#gameCanvas{display:block;background:#111;border-radius:8px}
 </div>
 <button class="btn-small" id="reset-btn">↩️ 重置梯形</button>
 <div class="stat-box" id="cam-status" style="font-size:11px;color:#aaa;background:rgba(255,255,255,0.08);padding:6px;border-radius:6px;text-align:center">未開啟</div>
-<div style="display:none"><span id="score">0</span><span id="timer">02:00</span></div>
+<div style="display:none"><span id="score">0</span><span id="timer">05:00</span></div>
 </header>
 <div id="board-wrapper">
-<div id="hud">🏆 <b id="hud-score">0</b> ⏱️ <b id="hud-timer">02:00</b></div>
+<div id="hud">🏆 <b id="hud-score">0</b> ⏱️ <b id="hud-timer">05:00</b></div>
 <canvas id="gameCanvas"></canvas>
 </div>
 </div>
@@ -107,17 +107,27 @@ function isBall(r,g,b){
 function trackLoop(){
  if(video.readyState>=2){
   previewCtx.save(); previewCtx.scale(-1,1); previewCtx.drawImage(video, -previewCanvas.width, 0, previewCanvas.width, previewCanvas.height); previewCtx.restore();
-  procCtx.drawImage(video,0,0,procCanvas.width,procCanvas.height);
+
+  // 改呢度：proc 都鏡像，同 preview 一致
+  procCtx.save(); procCtx.scale(-1,1); procCtx.drawImage(video, -procCanvas.width, 0, procCanvas.width, procCanvas.height); procCtx.restore();
+
   const data=procCtx.getImageData(0,0,procCanvas.width,procCanvas.height).data;
   let tx=0,ty=0,cnt=0;
   for(let y=0;y<procCanvas.height;y+=2){ for(let x=0;x<procCanvas.width;x+=2){ const i=(y*procCanvas.width+x)*4; if(isBall(data[i],data[i+1],data[i+2])){tx+=x;ty+=y;cnt++;}}}
   if(cnt>10){
-   const m=mapPoint(tx/cnt,ty/cnt);
+   const avgX=tx/cnt, avgY=ty/cnt;
+   const m=mapPoint(avgX,avgY);
    if(m && m.u>=0 && m.u<=1 && m.v>=0 && m.v<=1){
-    ballX=(1-m.u)*canvas.width; ballY=m.v*canvas.height;
+    // 改呢度：唔再 1-m.u，直接 m.u
+    ballX=m.u*canvas.width;
+    ballY=m.v*canvas.height;
     if(isPlaying && Date.now()-lastHitTime>250){ checkHit(ballX,ballY); lastHitTime=Date.now(); }
    }
-   previewCtx.fillStyle='#0f0'; previewCtx.beginPath(); previewCtx.arc((1-(tx/cnt)/procCanvas.width)*previewCanvas.width, (ty/cnt)/procCanvas.height*previewCanvas.height,6,0,Math.PI*2); previewCtx.fill();
+   // 綠點畫喺正確位
+   previewCtx.fillStyle='#0f0';
+   previewCtx.beginPath();
+   previewCtx.arc(avgX/procCanvas.width*previewCanvas.width, avgY/procCanvas.height*previewCanvas.height,7,0,Math.PI*2);
+   previewCtx.fill();
   } else ballX=-100;
  }
  requestAnimationFrame(trackLoop);
