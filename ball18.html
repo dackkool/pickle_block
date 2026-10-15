@@ -119,7 +119,7 @@ function trackLoop(){
    const m=mapPoint(avgX,avgY);
    if(m && m.u>=0 && m.u<=1 && m.v>=0 && m.v<=1){
     // 改呢度：唔再 1-m.u，直接 m.u
-    ballX=m.u*canvas.width;
+    ballX=(1-m.u)*canvas.width;
     ballY=m.v*canvas.height;
     if(isPlaying && Date.now()-lastHitTime>250){ checkHit(ballX,ballY); lastHitTime=Date.now(); }
    }
