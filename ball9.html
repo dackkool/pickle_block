@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>寶石方塊 - 暴力Fix</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:#0f172a}
+#game-container{display:flex;width:100vw;height:100vh}
+header{width:240px;background:#0009;padding:12px;display:flex;flex-direction:column;gap:10px}
+#camera-box{position:relative;width:100%;aspect-ratio:4/3;background:#000;border:2px solid #0f0;border-radius:12px;overflow:hidden}
+#webcam-preview{width:100%;height:100%;transform:scaleX(-1)}
+#roi-poly{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.handle{position:absolute;width:30px;height:30px;background:#ffd700;border-radius:50%;border:3px solid #000;transform:translate(-50%,-50%);z-index:5}
+#board-wrapper{flex:1;display:flex;justify-content:center;align-items:center}
+canvas#gameCanvas{background:#111;border-radius:8px}
+#overlay{position:fixed;inset:0;background:#0a0a14f2;z-index:99999;display:flex;flex-direction:column;justify-content:center;align-items:center;color:#fff;text-align:center;padding:20px}
+.btn{position:relative;z-index:100000;background:linear-gradient(135deg,#ff416c,#ff4b2b);color:#fff;border:none;padding:18px 50px;font-size:1.4rem;font-weight:700;border-radius:30px}
+.stat-box{background:#ffffff1a;padding:8px;border-radius:10px;text-align:center;color:#fff}
+</style>
+</head>
+<body>
+<video id="webcam" autoplay playsinline muted style="display:none"></video>
+<div id="game-container">
+<header>
+<div id="camera-box">
+<canvas id="webcam-preview"></canvas>
+<svg id="roi-poly" viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0"><polygon id="poly" points="15,12 85,12 88,88 12,88" fill="rgba(255,215,0,.2)" stroke="#ffd700" stroke-width="1.5" stroke-dasharray="4 3"/></svg>
+<div class="handle" style="left:15%;top:12%" data-i="0"></div><div class="handle" style="left:85%;top:12%" data-i="1"></div><div class="handle" style="left:88%;top:88%" data-i="2"></div><div class="handle" style="left:12%;top:88%" data-i="3"></div>
+</div>
+<div class="stat-box">分數 <span id="score">0</span></div>
+<div class="stat-box" id="status" style="font-size:12px">等待</div>
+</header>
+<div id="board-wrapper"><canvas id="gameCanvas"></canvas></div>
+</div>
+
+<div id="overlay">
+<h1>寶石方塊 - 梯形校正版</h1>
+<p style="margin:10px 0;color:#aaa">拖4個黃點對齊電視，支援雙指縮放</p>
+<!-- 暴力寫法：點都一定會隱藏 -->
+<button class="btn" onclick="document.getElementById('overlay').style.display='none'; window._start && window._start();">開啟後置鏡頭</button>
+<p id="err" style="color:#f66;margin-top:12px;font-size:12px"></p>
+</div>
+
+<script>
+// 保證全局
+window._start = function(){
+  try{
+    document.getElementById('status').innerText='Game已啟動';
+    initBoard(); isPlaying=true; requestAnimationFrame(loop);
+    // 鏡頭後台試，唔阻塞
+    if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
+      navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}}).then(s=>{
+        video.srcObject=s; video.play(); document.getElementById('status').innerText='後鏡頭 OK'; requestAnimationFrame(track);
+      }).catch(e=>{
+        document.getElementById('status').innerText='鏡頭失敗:'+e.name;
+        document.getElementById('err').innerText=e.message+'\n請用https+Chrome開';
+        navigator.mediaDevices.getUserMedia({video:true}).then(s=>{video.srcObject=s; video.play(); requestAnimationFrame(track);}).catch(()=>{});
+      });
+    }else{
+      document.getElementById('status').innerText='此瀏覽器不支援鏡頭';
+    }
+  }catch(e){ alert('JS錯: '+e.message); }
+};
+
+const canvas=document.getElementById('gameCanvas'), ctx=canvas.getContext('2d');
+const video=document.getElementById('webcam'), previewCanvas=document.getElementById('webcam-preview'), previewCtx=previewCanvas.getContext('2d');
+const COLS=10, ROWS=7; let tileSize=40, board=[], isPlaying=false, ballX=-100, ballY=-100;
+let quad=[{x:0.15,y:0.12},{x:0.85,y:0.12},{x:0.88,y:0.88},{x:0.12,y:0.88}];
+let homography=null;
+const proc=document.createElement('canvas'); proc.width=160; proc.height=120; const pctx=proc.getContext('2d',{willReadFrequently:true});
+
+function resize(){ const w=document.getElementById('board-wrapper'); tileSize=Math.floor(Math.min((w.clientWidth-20)/COLS,(w.clientHeight-20)/ROWS)); canvas.width=COLS*tileSize; canvas.height=ROWS*tileSize; previewCanvas.width=320; previewCanvas.height=240; updatePoly(); }
+function updatePoly(){ document.getElementById('poly').setAttribute('points', quad.map(p=>`${p.x*100},${p.y*100}`).join(' ')); document.querySelectorAll('.handle').forEach((h,i)=>{h.style.left=quad[i].x*100+'%';h.style.top=quad[i].y*100+'%';}); calcH(); }
+function calcH(){ const src=quad.map(p=>({x:p.x*proc.width,y:p.y*proc.height})); const dst=[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}]; let A=[],b=[]; for(let i=0;i<4;i++){let sx=src[i].x,sy=src[i].y,dx=dst[i].x,dy=dst[i].y;A.push([sx,sy,1,0,0,0,-dx*sx,-dx*sy]);b.push(dx);A.push([0,0,0,sx,sy,1,-dy*sx,-dy*sy]);b.push(dy);} for(let i=0;i<8;i++){let m=i;for(let r=i;r<8;r++)if(Math.abs(A[r][i])>Math.abs(A[m][i]))m=r;[A[i],A[m]]=[A[m],A[i]];[b[i],b[m]]=[b[m],b[i]];for(let r=i+1;r<8;r++){let f=A[r][i]/(A[i][i]||1);for(let c=i;c<8;c++)A[r][c]-=f*A[i][c];b[r]-=f*b[i];}} let h=new Array(8).fill(0);for(let i=7;i>=0;i--){let s=b[i];for(let c=i+1;c<8;c++)s-=A[i][c]*h[c];h[i]=s/(A[i][i]||1);} homography={h00:h[0],h01:h[1],h02:h[2],h10:h[3],h11:h[4],h12:h[5],h20:h[6],h21:h[7],h22:1};}
+function mapP(x,y){ if(!homography) return null; const h=homography; const d=h.h20*x+h.h21*y+h.h22; return {u:(h.h00*x+h.h01*y+h.h02)/d, v:(h.h10*x+h.h11*y+h.h12)/d}; }
+
+function track(){ if(video.readyState>=2){ previewCtx.save(); previewCtx.scale(-1,1); previewCtx.drawImage(video,-previewCanvas.width,0,previewCanvas.width,previewCanvas.height); previewCtx.restore(); pctx.drawImage(video,0,0,proc.width,proc.height); const d=pctx.getImageData(0,0,proc.width,proc.height).data; let tx=0,ty=0,c=0; for(let i=0;i<d.length;i+=16){if(d[i+1]>90&&d[i]>80&&d[i+2]<110){tx+= (i/4)%proc.width; ty+=Math.floor((i/4)/proc.width); c++;}} if(c>10){ const m=mapP(tx/c,ty/c); if(m&&m.u>=0&&m.u<=1){ballX=(1-m.u)*canvas.width; ballY=m.v*canvas.height; check(ballX,ballY);}} } requestAnimationFrame(track); }
+function check(x,y){ const c=Math.floor(x/tileSize), r=Math.floor(y/tileSize); if(board[r]&&board[r][c]!=null){board[r][c]=null; for(let rr=r;rr>0;rr--)board[rr][c]=board[rr-1][c]; board[0][c]=Math.floor(Math.random()*5); document.getElementById('score').innerText=parseInt(document.getElementById('score').innerText)+10; } }
+function initBoard(){ resize(); board=[]; for(let r=0;r<ROWS;r++){board[r]=[]; for(let c=0;c<COLS;c++) board[r][c]=Math.floor(Math.random()*5);} }
+function loop(){ ctx.clearRect(0,0,canvas.width,canvas.height); for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) if(board[r][c]!=null){ctx.fillStyle=['#ff3366','#33ccff','#33ff66','#ffcc00','#cc33ff'][board[r][c]]; ctx.beginPath(); ctx.arc(c*tileSize+tileSize/2,r*tileSize+tileSize/2,tileSize*0.32,0,Math.PI*2); ctx.fill();} if(ballX>0){ctx.strokeStyle='#0f0';ctx.lineWidth=3;ctx.beginPath();ctx.arc(ballX,ballY,18,0,Math.PI*2);ctx.stroke();} if(isPlaying) requestAnimationFrame(loop);
