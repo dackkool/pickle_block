@@ -89,20 +89,39 @@ async function setupCamera(){
  }
 }
 const procCanvas=document.createElement('canvas'),procCtx=procCanvas.getContext('2d',{willReadFrequently:true}); procCanvas.width=160; procCanvas.height=120;
-function computeHomography(){
- const src=quad.map(p=>({x:p.x*procCanvas.width, y:p.y*procCanvas.height}));
- const dst=[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}];
- let A=[],b=[]; for(let i=0;i<4;i++){const sx=src[i].x,sy=src[i].y,dx=dst[i].x,dy=dst[i].y;A.push([sx,sy,1,0,0,0,-dx*sx,-dx*sy]);b.push(dx);A.push([0,0,0,sx,sy,1,-dy*sx,-dy*sy]);b.push(dy);}
- let n=8; for(let i=0;i<n;i++){let m=i;for(let r=i;r<n;r++)if(Math.abs(A[r][i])>Math.abs(A[m][i]))m=r;[A[i],A[m]]=[A[m],A[i]];[b[i],b[m]]=[b[m],b[i]];for(let r=i+1;r<n;r++){let f=A[r][i]/(A[i][i]||1);for(let c=i;c<n;c++)A[r][c]-=f*A[i][c];b[r]-=f*b[i];}}
- let h=new Array(8).fill(0);for(let i=7;i>=0;i--){let s=b[i];for(let c=i+1;c<8;c++)s-=A[i][c]*h[c];h[i]=s/(A[i][i]||1);} homography={h00:h[0],h01:h[1],h02:h[2],h10:h[3],h11:h[4],h12:h[5],h20:h[6],h21:h[7],h22:1};
-}
-function mapPoint(x,y){ if(!homography) return null; const h=homography; const d=h.h20*x+h.h21*y+h.h22; if(Math.abs(d)<1e-6) return null; return {u:(h.h00*x+h.h01*y+h.h02)/d, v:(h.h10*x+h.h11*y+h.h12)/d}; }
-function isBall(r,g,b){
- if(selectedColor==='green') return g>80 && r>40 && b<140;
- if(selectedColor==='red') return r>130 && g<120 && b<120;
- if(selectedColor==='blue') return b>100 && r<120;
- if(selectedColor==='yellow') return r>140 && g>120 && b<130;
- return false;
+function computeHomography(){ /* 唔再用矩陣，留空就得 */ }
+
+function mapPoint(x,y){
+  // quad: 0 TL,1 TR,2 BR,3 BL，全部係 0~W / 0~H
+  const W=procCanvas.width, H=procCanvas.height;
+  const p00={x:quad[0].x*W,y:quad[0].y*H};
+  const p10={x:quad[1].x*W,y:quad[1].y*H};
+  const p11={x:quad[2].x*W,y:quad[2].y*H};
+  const p01={x:quad[3].x*W,y:quad[3].y*H};
+
+  // 1. 用 y 求左右邊界
+  function lerp(a,b,t){return a+(b-a)*t;}
+  // 避免除零
+  const tl_bl_dy = (p01.y - p00.y) || 0.0001;
+  const tr_br_dy = (p11.y - p10.y) || 0.0001;
+  let tyL = (y - p00.y) / tl_bl_dy;
+  let tyR = (y - p10.y) / tr_br_dy;
+  tyL = Math.max(0,Math.min(1,tyL));
+  tyR = Math.max(0,Math.min(1,tyR));
+  const xl = lerp(p00.x,p01.x,tyL);
+  const xr = lerp(p10.x,p11.x,tyR);
+  const denomX = (xr - xl) || 0.0001;
+  let u = (x - xl) / denomX;
+
+  // 2. 用 u 求上下邊界，再求 v
+  const yt = lerp(p00.y,p10.y,u);
+  const yb = lerp(p01.y,p11.y,u);
+  const denomY = (yb - yt) || 0.0001;
+  let v = (y - yt) / denomY;
+
+  u = Math.max(0,Math.min(1,u));
+  v = Math.max(0,Math.min(1,v));
+  return {u:u, v:v};
 }
 function trackLoop(){
  if(video.readyState>=2){
