@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>寶石方塊 - 自動感應版</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;user-select:none;-webkit-user-select:none}
+html,body{width:100%;height:100%;overflow:hidden;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,sans-serif}
+#game-container{display:flex;width:100vw;height:100vh;background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460);position:relative}
+
+/* 左側設定欄改為可收合抽屜式設計 */
+header{
+    position: absolute;
+    top: 0;
+    left: -320px;
+    width: 300px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: rgba(0,0,0,0.9);
+    border-right: 2px solid rgba(255,255,255,0.1);
+    padding: 10px;
+    gap: 8px;
+    z-index: 100;
+    transition: left 0.3s ease-in-out;
+    box-shadow: 5px 0 20px rgba(0,0,0,0.5);
+}
+header.open{left: 0;}
+header.big{width:92vw;max-width:540px;left:0;height:100vh;z-index:90;background:#000}
+
+/* 側邊欄開關按鈕（懸浮於畫面左上角） */
+#drawer-toggle {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    z-index: 101;
+    background: rgba(0, 0, 0, 0.7);
+    color: #ffd700;
+    border: 2px solid #ffd700;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    font-size: 0.9rem;
+}
+
+#camera-box{position:relative;width:100%;aspect-ratio:4/3;background:#000;border-radius:12px;overflow:hidden;border:2px solid #00ff00;touch-action:none}
+header.big #camera-box{height:68vh;aspect-ratio:auto}
+#webcam-preview{width:100%;height:100%;display:block;transform:scaleX(-1);background:#111}
+#roi-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.handle{position:absolute;width:32px;height:32px;background:#ffd700;border:3px solid #000;border-radius:50%;transform:translate(-50%,-50%);z-index:20;box-shadow:0 0 8px #ffd700}
+.color-row{display:flex;gap:5px}
+.color-btn{flex:1;padding:6px 0;border-radius:7px;border:2px solid #333;font-weight:bold;color:#fff}
+.color-btn.on{border-color:#fff;box-shadow:0 0 6px #fff}
+.btn-small{width:100%;background:#222;color:#fff;border:1px solid #555;padding:8px;border-radius:8px;font-size:0.85rem;cursor:pointer}
+.btn-auto{background:#0f8a3a;border-color:#22c55e;color:#fff;font-weight:bold}
+
+/* 讓右側方塊區佔滿整個畫面 */
+#board-wrapper{flex:1;display:flex;justify-content:center;align-items:center;position:relative;background:#0a0f1f;width:100vw;height:100vh;}
+canvas#gameCanvas{display:block;background:#111;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,0.8)}
+#hud{position:absolute;top:8px;left:50%;transform:translateX(-50%);display:flex;gap:14px;background:rgba(0,0,0,0.7);padding:6px 16px;border-radius:18px;color:#fff;font-weight:bold;z-index:5;border:1px solid rgba(255,255,255,0.2)}
+#hud b{color:#ffd700}
+#overlay{position:fixed;inset:0;background:rgba(10,10,20,0.92);display:flex;flex-direction:column;justify-content:center;align-items:center;color:white;z-index:99999;text-align:center;padding:20px}
+.btn{background:linear-gradient(135deg,#ff416c,#ff4b2b);color:white;border:none;padding:16px 45px;font-size:1.3rem;font-weight:bold;border-radius:30px;cursor:pointer}
+</style>
+</head>
+<body>
+<video id="webcam" autoplay playsinline muted style="display:none"></video>
+
+<!-- 抽屜開關按鈕 -->
+<button id="drawer-toggle">⚙️ 設定選單</button>
+
+<div id="game-container">
+<header id="mainHeader">
+<div id="camera-box">
+<canvas id="webcam-preview"></canvas>
+<svg id="roi-svg" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon id="roi-poly" points="15,15 85,15 85,85 15,85" fill="rgba(255,215,0,0.2)" stroke="#ffd700" stroke-width="1.5" stroke-dasharray="4 3"/></svg>
+<div class="handle" data-i="0"></div><div class="handle" data-i="1"></div><div class="handle" data-i="2"></div><div class="handle" data-i="3"></div>
+</div>
+<button class="btn-small btn-auto" id="auto-btn">🤖 自動偵測投影區</button>
+<button class="btn-small" id="calib-btn">🔍 放大校正 (再按收回)</button>
+<div class="color-row">
+<button class="color-btn on" data-c="green" style="background:#22c55e">綠</button>
+<button class="color-btn" data-c="red" style="background:#ef4444">紅</button>
+<button class="color-btn" data-c="blue" style="background:#3b82f6">藍</button>
+<button class="color-btn" data-c="yellow" style="background:#eab308;color:#000">黃</button>
+</div>
+<button class="btn-small" id="reset-btn">↩️ 重置虛線區</button>
+<div id="cam-status" style="font-size:11px;color:#ffcc00;background:rgba(255,255,255,0.08);padding:7px;border-radius:6px;text-align:center;line-height:1.4">未開啟 - 按開始後自動尋找投影</div>
+<div style="display:none"><span id="score">0</span><span id="timer">05:00</span></div>
+</header>
+<div id="board-wrapper">
+<div id="hud">🏆 <b id="hud-score">0</b> ⏱️ <b id="hud-timer">05:00</b></div>
+<canvas id="gameCanvas"></canvas>
+</div>
+</div>
+<div id="overlay">
+<h1>寶石方塊 - 自動感應版</h1>
+<p style="margin:10px 0;font-size:14px;line-height:1.6">自動偵測牆上投影板<br>搵唔到會顯示「未能接上感應」</p>
+<button class="btn" id="start-btn">開啟後置鏡頭開始</button>
+<p id="debug" style="color:#ff6666;margin-top:10px;font-size:12px"></p>
+</div>
+<script>
+const canvas=document.getElementById('gameCanvas'),ctx=canvas.getContext('2d'),video=document.getElementById('webcam'),previewCanvas=document.getElementById('webcam-preview'),previewCtx=previewCanvas.getContext('2d');
+const COLS=10,ROWS=7; let tileSize=40;
+const GEM_COLORS=[
+{main:'#ff6b81',dark:'#cc3355',emoji:'🐱'},
+{main:'#70a1ff',dark:'#3366cc',emoji:'🐶'},
+{main:'#7bed9f',dark:'#33aa55',emoji:'🐸'},
+{main:'#ffa502',dark:'#cc8400',emoji:'🐯'},
+{main:'#a55eea',dark:'#7a33cc',emoji:'🐰'}
+];
+let board=[],score=0,timeLeft=300,gameInterval=null,isPlaying=false,particles=[],ballX=-100,ballY=-100,lastHitTime=0;
+let quad=[{x:0.15,y:0.15},{x:0.85,y:0.15},{x:0.85,y:0.85},{x:0.15,y:0.85}];
+let selectedColor='green';
+let autoDetected=false,lastAutoTry=0,projectionFound=false;
+
+// 簡易動物叫聲合成 (Web Audio API)
+let audioCtx = null;
+function initAudio() {
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } else if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+}
+function playAnimalSound(emoji) {
+    if (!audioCtx) return;
+    try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        const now = audioCtx.currentTime;
+
+        if (emoji === '🐱') { // 貓咪喵聲 (高頻滑音)
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(600, now);
+            osc.frequency.exponentialRampToValueAtTime(900, now + 0.15);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
+            osc.start(now); osc.stop(now + 0.2);
+        } else if (emoji === '🐶') { // 狗狗汪聲 (短促中頻)
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(300, now);
+            osc.frequency.setValueAtTime(220, now + 0.1);
+            gain.gain.setValueAtTime(0.25, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.15);
+            osc.start(now); osc.stop(now + 0.15);
+        } else if (emoji === '🐸') { // 青蛙呱聲 (低頻跳動)
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(150, now);
+            osc.frequency.setValueAtTime(200, now + 0.1);
+            gain.gain.setValueAtTime(0.3, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+            osc.start(now); osc.stop(now + 0.25);
+        } else if (emoji === '🐯') { // 老虎吼聲 (低沉鋸齒波)
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(120, now);
+            osc.frequency.linearRampToValueAtTime(80, now + 0.3);
+            gain.gain.setValueAtTime(0.35, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.35);
+            osc.start(now); osc.stop(now + 0.35);
+        } else if (emoji === '🐰') { // 兔子跳躍音 (清脆高音)
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(800, now);
+            osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.12);
+            osc.start(now); osc.stop(now + 0.12);
+        }
+    } catch(e) {}
+}
+
+function resizeCanvas(){
+  const w=document.getElementById('board-wrapper');
+  const maxW=(w.clientWidth||window.innerWidth)-10, maxH=(w.clientHeight||window.innerHeight)-10;
+  tileSize=Math.floor(Math.min(maxW/COLS,maxH/ROWS));
+  if(tileSize<10) tileSize=40;
+  canvas.width=COLS*tileSize; canvas.height=ROWS*tileSize;
+  if(previewCanvas.width===0 || previewCanvas.width<100){ previewCanvas.width=320; previewCanvas.height=240; }
+  updateHandles();
+}
+window.addEventListener('resize',resizeCanvas);
+window.addEventListener('orientationchange',()=>{setTimeout(resizeCanvas,400);});
+
+async function setupCamera(){
+ const status=document.getElementById('cam-status');
+ const debug=document.getElementById('debug');
+ try{
+  let stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}});
+  video.srcObject=stream; await video.play().catch(()=>{});
+  status.innerText='🔍 正在尋找投影板...'; status.style.color='#ffcc00';
+  autoDetected=false;
+  requestAnimationFrame(trackLoop);
+ }catch(e){
+  status.innerText='鏡頭失敗: '+e.name; status.style.color='#f66';
+  debug.innerText='請用 https + Chrome 開';
+ }
+}
+const procCanvas=document.createElement('canvas'),procCtx=procCanvas.getContext('2d',{willReadFrequently:true});
+procCanvas.width=160; procCanvas.height=120;
+
+function computeHomography(){ return; }
+
+function mapPoint(x,y){
+  const W=procCanvas.width, H=procCanvas.height;
+  const p00={x:quad[0].x*W,y:quad[0].y*H};
+  const p10={x:quad[1].x*W,y:quad[1].y*H};
+  const p11={x:quad[2].x*W,y:quad[2].y*H};
+  const p01={x:quad[3].x*W,y:quad[3].y*H};
+  const lerp=(a,b,t)=>a+(b-a)*t;
+  let tyL=(y-p00.y)/((p01.y-p00.y)||0.0001);
+  let tyR=(y-p10.y)/((p11.y-p10.y)||0.0001);
+  tyL=Math.max(0,Math.min(1,tyL)); tyR=Math.max(0,Math.min(1,tyR));
+  const xl=lerp(p00.x,p01.x,tyL);
+  const xr=lerp(p10.x,p11.x,tyR);
+  const denomX=(xr-xl)||0.0001;
+  let u=(x-xl)/denomX;
+  const yt=lerp(p00.y,p10.y,Math.max(0,Math.min(1,u)));
+  const yb=lerp(p01.y,p11.y,Math.max(0,Math.min(1,u)));
+  let v=(y-yt)/((yb-yt)||0.0001);
+  return {u:Math.max(0,Math.min(1,u)), v:Math.max(0,Math.min(1,v))};
+}
+
+function isBall(r,g,b){
+ if(selectedColor==='green') return g>75 && g>r && r>30 && b<160;
+ if(selectedColor==='red') return r>130 && g<120 && b<120;
+ if(selectedColor==='blue') return b>110 && b>r+20;
+ if(selectedColor==='yellow') return r>140 && g>110 && b<140;
+ return false;
+}
+
+// 自動偵測投影板
+function autoDetectBoard(){
+  if(!video || video.readyState<2) return null;
+  const W=procCanvas.width, H=procCanvas.height;
+  const tmp=document.createElement('canvas'); tmp.width=W; tmp.height=H;
+  const tctx=tmp.getContext('2d'); tctx.drawImage(video,0,0,W,H);
+  const data=tctx.getImageData(0,0,W,H).data;
+  let minX=W, maxX=0, minY=H, maxY=0, cnt=0;
+  for(let y=0;y<H;y+=2){
+    for(let x=0;x<W;x+=2){
+      const i=(y*W+x)*4; const r=data[i], g=data[i+1], b=data[i+2];
+      const bright=(r+g+b)/3; const diff=Math.max(r,g,b)-Math.min(r,g,b);
+      if(bright>50 && diff>15){ minX=Math.min(minX,x); maxX=Math.max(maxX,x); minY=Math.min(minY,y); maxY=Math.max(maxY,y); cnt++; }
+    }
+  }
+  if(cnt<400) return null;
+  if((maxX-minX)<W*0.18 || (maxY-minY)<H*0.18) return null;
+  const padX=W*0.02, padY=H*0.02;
+  minX=Math.max(0,minX-padX); maxX=Math.min(W,maxX+padX); minY=Math.max(0,minY-padY); maxY=Math.min(H,maxY+padY);
+  return [
+    {x:1-maxX/W, y:minY/H},
+    {x:1-minX/W, y:minY/H},
+    {x:1-minX/W, y:maxY/H},
+    {x:1-maxX/W, y:maxY/H}
+  ];
+}
+function tryAutoCalibrate(){
+  if(autoDetected) return;
+  if(Date.now()-lastAutoTry<900) return;
+  lastAutoTry=Date.now();
+  const q=autoDetectBoard();
+  const status=document.getElementById('cam-status');
+  if(q){
+    quad=q; updateHandles(); projectionFound=true; autoDetected=true;
+    status.innerText='✅ 已自動接上感應 - 虛線區已對準投影板'; status.style.color='#22c55e';
+    const poly=document.getElementById('roi-poly'); poly.setAttribute('stroke','#00ff00');
+    setTimeout(()=>poly.setAttribute('stroke','#ffd700'),1000);
+  }else{
+    projectionFound=false;
+    status.innerText='⚠️ 未能接上感應 - 請將投影板完整放入鏡頭中央，調光一點'; status.style.color='#ffcc00';
+  }
+}
+
+function trackLoop(){
+ if(video.readyState>=2){
+  tryAutoCalibrate();
+  previewCtx.save(); previewCtx.scale(-1,1); previewCtx.drawImage(video, -previewCanvas.width, 0, previewCanvas.width, previewCanvas.height); previewCtx.restore();
+  procCtx.save(); procCtx.scale(-1,1); procCtx.drawImage(video, -procCanvas.width, 0, procCanvas.width, procCanvas.height); procCtx.restore();
+  const data=procCtx.getImageData(0,0,procCanvas.width,procCanvas.height).data;
+  let tx=0,ty=0,cnt=0;
+  for(let y=0;y<procCanvas.height;y+=2){ for(let x=0;x<procCanvas.width;x+=2){ const i=(y*procCanvas.width+x)*4; if(isBall(data[i],data[i+1],data[i+2])){tx+=x;ty+=y;cnt++;}}}
+  if(cnt>10){
+   const avgX=tx/cnt, avgY=ty/cnt;
+   const m=mapPoint(avgX,avgY);
+   ballX=m.u * canvas.width;
+   ballY=m.v * canvas.height;
+   if(isPlaying && projectionFound && Date.now()-lastHitTime>200){ checkHit(ballX,ballY); lastHitTime=Date.now(); }
+   previewCtx.fillStyle='#00ff00';
+   previewCtx.beginPath();
+   previewCtx.arc(avgX/procCanvas.width*previewCanvas.width, avgY/procCanvas.height*previewCanvas.height,9,0,Math.PI*2);
+   previewCtx.fill();
+  } else ballX=-100;
+ }
+ requestAnimationFrame(trackLoop);
+}
+
+function checkHit(x,y){const c=Math.floor(x/tileSize),r=Math.floor(y/tileSize); if(r>=0&&r<ROWS&&c>=0&&c<COLS&&board[r][c]!==null) destroySingle(r,c);}
+function updateHandles(){document.querySelectorAll('.handle').forEach((el,i)=>{el.style.left=quad[i].x*100+'%';el.style.top=quad[i].y*100+'%';});document.getElementById('roi-poly').setAttribute('points',quad.map(p=>`${p.x*100},${p.y*100}`).join(' '));}
+(function(){
+ const box=document.getElementById('camera-box'); let a=-1;
+ document.querySelectorAll('.handle').forEach(h=>{h.addEventListener('pointerdown',e=>{a=parseInt(h.dataset.i);h.setPointerCapture(e.pointerId);});});
+ window.addEventListener('pointermove',e=>{if(a>=0){const r=box.getBoundingClientRect(); quad[a]={x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)), y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))}; updateHandles();}});
+ window.addEventListener('pointerup',()=>a=-1);
+})();
+
+async function startGame(){
+ document.getElementById('overlay').style.display='none';
+
+ // 要求進入全螢幕以隱藏網址列，釋放完整垂直空間
+ const docEl = document.documentElement;
+ if (docEl.requestFullscreen) {
+     docEl.requestFullscreen().catch(() => {});
+ } else if (docEl.webkitRequestFullscreen) {
+     docEl.webkitRequestFullscreen();
+ }
+
+ initAudio();
+ score=0; timeLeft=300;
+ document.getElementById('score').innerText=0; document.getElementById('hud-score').innerText=0;
+ document.getElementById('hud-timer').innerText='05:00';
+ initBoard(); isPlaying=true;
+ if(gameInterval) clearInterval(gameInterval);
+ gameInterval=setInterval(()=>{timeLeft--; const m=Math.floor(timeLeft/60),s=timeLeft%60; const t=`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; document.getElementById('timer').innerText=t; document.getElementById('hud-timer').innerText=t; if(timeLeft<=0) endGame();},1000);
+ requestAnimationFrame(gameLoop);
+ setupCamera();
+ setTimeout(resizeCanvas, 300);
+}
+function endGame(){isPlaying=false;clearInterval(gameInterval);document.getElementById('overlay').innerHTML='<h1>結束 得分 '+score+'</h1><button class="btn" onclick="location.reload()">再玩一次</button>';document.getElementById('overlay').style.display='flex';}
+function initBoard(){resizeCanvas(); board=[]; for(let r=0;r<ROWS;r++){board[r]=[]; for(let c=0;c<COLS;c++) board[r][c]=Math.floor(Math.random()*GEM_COLORS.length);} }
+
+function destroySingle(r,c){
+  let gemObj = GEM_COLORS[board[r][c]];
+  playAnimalSound(gemObj.emoji); // 播放對應動物叫聲
+  score+=10;
+  document.getElementById('score').innerText=score;
+  document.getElementById('hud-score').innerText=score;
+  createParticles(c*tileSize+tileSize/2,r*tileSize+tileSize/2,gemObj.main);
+  board[r][c]=null;
+  for(let rr=r;rr>0;rr--)board[rr][c]=board[rr-1][c];
+  board[0][c]=Math.floor(Math.random()*GEM_COLORS.length);
+}
+
+function createParticles(x,y,color){for(let i=0;i<8;i++){const a=Math.random()*Math.PI*2,s=Math.random()*3+1;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,color,alpha:1,decay:0.05});}}
+function drawGem(x,y,size,obj){const s=size*0.82;ctx.save();ctx.translate(x,y);ctx.fillStyle=obj.dark;ctx.fillRect(-s/2+2,-s/2+3,s,s);ctx.fillStyle=obj.main;ctx.fillRect(-s/2,-s/2,s,s);ctx.font=Math.floor(s*0.55)+'px serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(obj.emoji,0,s*0.12);ctx.restore();}
+function update(){for(let i=particles.length-1;i>=0;i--){let p=particles[i];p.x+=p.vx;p.y+=p.vy;p.alpha-=p.decay;if(p.alpha<=0)particles.splice(i,1);}}
+
+// 繪製動物方塊區四個角落的對位標記
+function drawAlignmentMarkers(){
+  const mSize = 22;
+  const offset = 8;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  ctx.save();
+  ctx.strokeStyle = '#00ffcc';
+  ctx.lineWidth = 3;
+  ctx.shadowColor = '#00ffcc';
+  ctx.shadowBlur = 8;
+
+  ctx.beginPath();
+  ctx.moveTo(offset, offset + mSize); ctx.lineTo(offset, offset); ctx.lineTo(offset + mSize, offset);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(w - offset - mSize, offset); ctx.lineTo(w - offset, offset); ctx.lineTo(w - offset, offset + mSize);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(offset, h - offset - mSize); ctx.lineTo(offset, h - offset); ctx.lineTo(offset + mSize, h - offset);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(w - offset - mSize, h - offset); ctx.lineTo(w - offset, h - offset); ctx.lineTo(w - offset, h - offset - mSize);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    ctx.fillStyle=(r+c)%2?'rgba(255,255,255,0.04)':'rgba(0,0,0,0.15)';
+    ctx.fillRect(c*tileSize,r*tileSize,tileSize,tileSize);
+    if(board[r][c]!==null)drawGem(c*tileSize+tileSize/2,r*tileSize+tileSize/2,tileSize,GEM_COLORS[board[r][c]]);
+  }
+
+  drawAlignmentMarkers();
+
+  for(let p of particles){
+    ctx.globalAlpha=p.alpha;
+    ctx.fillStyle=p.color;
+    ctx.fillRect(p.x-2,p.y-2,4,4);
+  }
+  ctx.globalAlpha=1;
+  if(ballX>0){
+    ctx.strokeStyle=projectionFound?'#00ff00':'#ff4444';
+    ctx.lineWidth=3;
+    ctx.beginPath();
+    ctx.arc(ballX,ballY,22,0,Math.PI*2);
+    ctx.stroke(); 
+    if(!projectionFound){
+      ctx.fillStyle='#ff4444';
+      ctx.font='12px sans-serif';
+      ctx.fillText('未接上',ballX+28,ballY);
+    }
+  }
+}
+function gameLoop(){update();draw();if(isPlaying)requestAnimationFrame(gameLoop);}
+
+// 抽屜選單開關控制
+document.getElementById('drawer-toggle').addEventListener('click',()=>{
+    document.getElementById('mainHeader').classList.toggle('open');
+    setTimeout(resizeCanvas,350);
+});
+
+document.getElementById('start-btn').addEventListener('click',startGame);
+document.getElementById('reset-btn').addEventListener('click',()=>{quad=[{x:0.15,y:0.15},{x:0.85,y:0.15},{x:0.85,y:0.85},{x:0.15,y:0.85}];updateHandles(); autoDetected=false;});
+document.getElementById('calib-btn').addEventListener('click',()=>{document.getElementById('mainHeader').classList.toggle('big');setTimeout(resizeCanvas,300);});
+document.getElementById('auto-btn').addEventListener('click',()=>{autoDetected=false; document.getElementById('cam-status').innerText='🔍 正在重新尋找投影...';});
+document.querySelectorAll('.color-btn').forEach(b=>{b.addEventListener('click',()=>{document.querySelectorAll('.color-btn').forEach(x=>x.classList.remove('on'));b.classList.add('on');selectedColor=b.dataset.c;});});
+canvas.addEventListener('click',e=>{if(!isPlaying) return; const r=canvas.getBoundingClientRect(); checkHit((e.clientX-r.left)/r.width*canvas.width, (e.clientY-r.top)/r.height*canvas.height);});
+resizeCanvas(); draw();
+</script>
+</body>
+</html>
