@@ -305,7 +305,7 @@ function trackLoop(){
   if(cnt>10){
    const avgX=tx/cnt, avgY=ty/cnt;
    const m=mapPoint(avgX,avgY);
-   ballX=m.u * canvas.width;
+   ballX=(1-m.u) * canvas.width;
    ballY=m.v * canvas.height;
    if(isPlaying && projectionFound && Date.now()-lastHitTime>200){ checkHit(ballX,ballY); lastHitTime=Date.now(); }
    previewCtx.fillStyle='#00ff00';
